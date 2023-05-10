@@ -68,4 +68,4 @@ jobs:
     - name: Push to GitHub Container Registry
       run: make docker-push
       env:
-        IMG: ${{ env.IMAGE_NAME }}:${{IMG_TAG}}
+        IMG: ${{ env.IMAGE_NAME }}:${{env.IMG_TAG}}
