@@ -96,11 +96,11 @@ jobs:
             ${{ steps.images.outputs.ghcr}}
         tags: |
           type=ref,event=branch
-        
+    
     - name: Push to GitHub Container Registry
       run: make docker-push
       env:
-        REGISTRY: gchr.io
+        IMG_NAME: ${{ github.repository }}
         IMG_TAG: ${{ env.IMG_TAG }}
 
     - name: Initialize CodeQL
