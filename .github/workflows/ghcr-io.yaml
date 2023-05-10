@@ -61,8 +61,11 @@ jobs:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
   
     - name: Build
-      run: make docker-build
+      run: |
+        make docker-build 
+        make docker-push
       env:
+        registry: ${{ env.REGISTRY }}
         IMG_TAG: ${{ env.IMG_TAG }}
         
     - name: Push to GitHub Container Registry
