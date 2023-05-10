@@ -69,3 +69,4 @@ jobs:
       run: make docker-push
       env:
         IMG: ${{ env.IMAGE_NAME }}:${{env.IMG_TAG}}
+        
