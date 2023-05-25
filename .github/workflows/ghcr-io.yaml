@@ -1,4 +1,4 @@
-name: Create and publish a Docker image
+name: Full-CI
 
 on:
   push:
@@ -6,16 +6,24 @@ on:
     tags: [ '*' ]
   pull_request:
     branches: [ main ]
+  workflow_call:
+    inputs:
+      service:
+        description: Name of the service
+        type: string
+        required: false
+        default: ${{ github.repository }}
 
 env:
-  REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  username: ${{ secrets.DOCKERHUB_USER }}
+  password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 jobs:
-  build-and-push-image:
-    runs-on: ubuntu-latest
+  full-CI:
+    runs-on: ubuntu-22.04
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
@@ -26,15 +34,14 @@ jobs:
         else
           echo "IMG_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
         fi
-
+        
     - name: Set up Go
       uses: actions/setup-go@v2
       with:
         go-version: '>=1.19'
 
       # Don't run this since PR does not have access to secrets. 
-      # Let the make docker-build generate the temp. key
-      
+      # Let the make docker-build generate the temp. key  
     - name: Setup signing key
       if: ${{ github.event_name != 'pull_request' }}
       run: |
@@ -46,24 +53,75 @@ jobs:
         
     - name: Checkout repository
       uses: actions/checkout@v3
-
-    - name: Log in to the Container registry
-      uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+      
+    - name: Login to GitHub container registry
+      uses: docker/login-action@v2
       with:
-        registry: ${{ env.REGISTRY }}
+        registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Extract metadata (tags, labels) for Docker
-      id: meta
-      uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+    - name: Build and Push
+      if: github.event_name == 'pull_request'
+      run: |
+        make docker-build 
+        make docker-push
+      env:
+        registry: ${{ env.REGISTRY }}
+        IMG_TAG: ${{ env.IMG_TAG }}
+        
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
       with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        languages: go
 
-    - name: Build and push Docker image
-      uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+    
+    - name: Run Trivy vulnerability scanner in fs mode
+      uses: aquasecurity/trivy-action@master
       with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+        scan-type: 'fs'
+        scan-ref: '.'
+        trivy-config: trivy.yaml
+
+    - name: Run Trivy vulnerability scanner for GitHub Registry image
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'ghcr.io/intel/trusted-certificate-issuer:latest'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Login to DockerHub container registry
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USER }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+    - name: Prepare Images
+      id: images
+      run: |
+          DOCKER_IMAGE=docker.io/${IMG_NAME}:${IMG_TAG}
+          GHCR_IMAGE=ghcr.io/${IMG_NAME}:${IMG_TAG}
+          echo ::set-output name=dockerhub::${DOCKER_IMAGE}
+          echo ::set-output name=ghcr::${GHCR_IMAGE}
+
+    - name: Extract metadata (tags, labels) for Docker
+      id: metadata
+      uses: docker/metadata-action@v4
+      with:
+        images: |
+            ${{ steps.images.outputs.dockerhub }}
+            ${{ steps.images.outputs.ghcr}}
+        tags: |
+          type=ref,event=branch
+
+    - name: Push to DockerHub Container Registry
+      run: make docker-push
+      env:
+        REGISTRY: docker.io
+        IMG_TAG: ${{ env.IMG_TAG }}
+        IMG: ${{ steps.images.outputs.dockerhub }}
